@@ -1,20 +1,114 @@
 ---
-title: "Writeup"
+title: "Predict Dumbbell Biceps Curl Performance"
 output: html_document
 ---
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+The goal of the project is to predict the manner of doing the exercise and thus we can quantify how well people do it.
+Six young health participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E). 
+The traning and testing datasets are from [Groupware@LES](http://groupware.les.inf.puc-rio.br/har).
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+##Load library and set the seed
 
-```{r}
-summary(cars)
+```{R, message = FALSE, warning = FALSE}
+library(caret); library(corrplot)
+set.seed(321)
 ```
 
-You can also embed plots, for example:
+##Downloading Data files and load data into R
 
-```{r, echo=FALSE}
-plot(cars)
+```{r, cache=TRUE}
+## Create training and testing dataset URL
+
+fileURL.train <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+fileURL.test <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+## Create Downloads directory if not exists
+
+if (!file.exists("Downloads")) {
+    dir.create("Downloads")
+}
+
+## Download the datasets
+
+temp.train <- "~/Downloads/pml-training.csv"
+download.file(fileURL.train, temp.train, method="curl")
+temp.test <- "~/Downloads/pml-testing.csv"
+download.file(fileURL.test, temp.test, method="curl")
+
+## Load the training dataset
+
+temp = read.csv("~/Downloads/pml-training.csv", 
+                header = TRUE, na.string = c("", "NA", "NULL", "#DIV/0!"))
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+##Preprocessing the data
+
+Remove variables that have many NA values.
+
+```{r, cache=TRUE}
+temp = temp[, (colSums(is.na(temp)) == 0)]
+```
+
+Filter out the incomplete cases and remove the irrelevant variables: X, user_name, raw_timestamp_part_1, raw_timestamp_part_2, cvtd_timestamp, new_window, num_window.
+
+```{r, cache=TRUE}
+temptrain = temp[complete.cases(temp), -c(1, 2, 3, 4, 5, 6, 7)]
+```
+
+##Data Splitting
+
+The original training dataset is splitted into model training and testing datasets. The are 14718 and 4904 observations respectively.
+
+```{r, cache=TRUE}
+inTrain = createDataPartition(y = temptrain$classe, p = 0.75, list = FALSE)
+training = temptrain[inTrain,]
+testing = temptrain[-inTrain,]
+dim(training); dim(testing)
+```
+
+##Remove High Correlation (over 0.8) Variables
+
+From the correlation plot, we can identify several high correlated variables. Thirteen variables in the training dataset are removed to reduce the pair-wise correlations. The correlation cutoff is 0.8. Thirty nine predictors are used to build the prediction.
+
+```{r, cache=TRUE}
+
+## Column 53 is classe and is not included in the correlation matrix. 
+
+corrMatrix = cor(training[, -53])
+corrplot(corrMatrix, order = "hclust", method="color", type = "lower", tl.cex = 0.8)
+highCorr = findCorrelation(corrMatrix, cutoff = 0.8)
+newtraining = training[,-highCorr]
+dim(newtraining)
+
+```
+
+## Building Prediction 
+
+The training dataset has 14718 observations of 39 predictors. Random forest is used to create the model because it is the top performance algorithm for classifier. The accuracy on traing dataset is 0.987. The long training hour (over 10 hours) is a major disadvantge. 
+
+```{r, cache=TRUE, message=FALSE, warning=FALSE}
+modrf <- train(newtraining$classe ~ ., data = newtraining, method = "rf", prox = TRUE)
+modrf
+```
+
+## Expected out of sample error
+
+The confusion matrix shows the expected out of sample error. The overall accurary of the random forest model is 0.9923. The senitivity, specificity, positive predictive value, and negative predictive value of all class are over 0.99. The random forest is selected because of the high accouracy and the low out of sample error. Although the model building takes very long time, but it only needs to execute once.
+
+```{r, cache=TRUE}
+predrf <- predict(modrf, testing)
+confMatrixrf <- confusionMatrix(testing$classe, predrf)
+confMatrixrf
+```
+
+## Prediction On Testing Data
+
+The results of the 20 different test cases are as following:
+B A B A A E D B A A B C B A E E A B B B
+
+```{r, cache=TRUE}
+pml.testing <- read.csv("~/Downloads/pml-testing.csv", header = TRUE, 
+                        na.string = c("", "NA", "NULL", "#DIV/0!"))
+predrf2 <- predict(modrf, pml.testing)
+predrf2
+```
